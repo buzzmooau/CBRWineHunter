@@ -9,6 +9,7 @@ from app.config import settings
 # Create database engine
 engine = create_engine(
     settings.database_url,
+    connect_args={"client_encoding": "utf8"},
     pool_pre_ping=True,  # Enable connection health checks
     pool_size=10,  # Maximum number of connections in the pool
     max_overflow=20,  # Maximum overflow connections

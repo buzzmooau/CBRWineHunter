@@ -1,0 +1,228 @@
+import { useState, useEffect } from 'react'
+import { getWines, getVarieties, getVintages } from '../services/wineService'
+import WineCard from '../components/WineCard'
+
+function WinesPage() {
+  const [wines, setWines] = useState([])
+  const [varieties, setVarieties] = useState([])
+  const [vintages, setVintages] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [totalCount, setTotalCount] = useState(0)
+
+  // Filters
+  const [selectedVariety, setSelectedVariety] = useState('')
+  const [selectedVintage, setSelectedVintage] = useState('')
+  const [minPrice, setMinPrice] = useState('')
+  const [maxPrice, setMaxPrice] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
+
+  useEffect(() => {
+    fetchFilters()
+    fetchWines()
+  }, [])
+
+  useEffect(() => {
+    fetchWines()
+  }, [selectedVariety, selectedVintage, minPrice, maxPrice, searchQuery])
+
+  const fetchFilters = async () => {
+    try {
+      const [varietiesData, vintagesData] = await Promise.all([
+        getVarieties(),
+        getVintages()
+      ])
+      setVarieties(varietiesData.varieties || [])
+      setVintages(vintagesData.vintages || [])
+    } catch (err) {
+      console.error('Error fetching filters:', err)
+    }
+  }
+
+  const fetchWines = async () => {
+    try {
+      setLoading(true)
+      const params = {
+        limit: 100,
+      }
+      
+      if (selectedVariety) params.variety = selectedVariety
+      if (selectedVintage) params.vintage = selectedVintage
+      if (minPrice) params.min_price = parseFloat(minPrice)
+      if (maxPrice) params.max_price = parseFloat(maxPrice)
+      if (searchQuery) params.search = searchQuery
+
+      const data = await getWines(params)
+      setWines(data.wines)
+      setTotalCount(data.total)
+      setError(null)
+    } catch (err) {
+      setError('Failed to load wines. Please try again later.')
+      console.error(err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const clearFilters = () => {
+    setSelectedVariety('')
+    setSelectedVintage('')
+    setMinPrice('')
+    setMaxPrice('')
+    setSearchQuery('')
+  }
+
+  if (loading && wines.length === 0) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-wine-burgundy mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading wines...</p>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <header className="bg-white shadow-sm">
+        <div className="container mx-auto px-4 py-6">
+          <h1 className="text-4xl font-display font-bold text-wine-burgundy">
+            Canberra Region Wines
+          </h1>
+          <p className="text-gray-600 mt-2">
+            Browse {totalCount} wines from across the region
+          </p>
+        </div>
+      </header>
+
+      <main className="container mx-auto px-4 py-8">
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+          {/* Filters Sidebar */}
+          <aside className="lg:col-span-1">
+            <div className="bg-white rounded-lg shadow-md p-6 sticky top-4">
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-xl font-display font-semibold text-wine-burgundy">
+                  Filters
+                </h2>
+                {(selectedVariety || selectedVintage || minPrice || maxPrice || searchQuery) && (
+                  <button
+                    onClick={clearFilters}
+                    className="text-sm text-wine-burgundy hover:underline"
+                  >
+                    Clear all
+                  </button>
+                )}
+              </div>
+
+              {/* Search */}
+              <div className="mb-6">
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Search
+                </label>
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Wine name..."
+                  className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-wine-burgundy"
+                />
+              </div>
+
+              {/* Variety Filter */}
+              <div className="mb-6">
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Variety
+                </label>
+                <select
+                  value={selectedVariety}
+                  onChange={(e) => setSelectedVariety(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-wine-burgundy"
+                >
+                  <option value="">All Varieties</option>
+                  {varieties.map((variety) => (
+                    <option key={variety.name} value={variety.name}>
+                      {variety.name} ({variety.count})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Vintage Filter */}
+              <div className="mb-6">
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Vintage
+                </label>
+                <select
+                  value={selectedVintage}
+                  onChange={(e) => setSelectedVintage(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-wine-burgundy"
+                >
+                  <option value="">All Vintages</option>
+                  {vintages.map((vintage) => (
+                    <option key={vintage.year} value={vintage.year}>
+                      {vintage.year} ({vintage.count})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Price Range */}
+              <div className="mb-6">
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Price Range
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    value={minPrice}
+                    onChange={(e) => setMinPrice(e.target.value)}
+                    placeholder="Min"
+                    className="w-1/2 px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-wine-burgundy"
+                  />
+                  <input
+                    type="number"
+                    value={maxPrice}
+                    onChange={(e) => setMaxPrice(e.target.value)}
+                    placeholder="Max"
+                    className="w-1/2 px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-wine-burgundy"
+                  />
+                </div>
+              </div>
+            </div>
+          </aside>
+
+          {/* Wines Grid */}
+          <div className="lg:col-span-3">
+            {error && (
+              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-6">
+                {error}
+              </div>
+            )}
+
+            {wines.length > 0 ? (
+              <>
+                <div className="mb-4 text-gray-600">
+                  Showing {wines.length} of {totalCount} wines
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                  {wines.map((wine) => (
+                    <WineCard key={wine.id} wine={wine} />
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div className="text-center py-12 bg-white rounded-lg shadow-md">
+                <p className="text-gray-600 text-lg mb-2">No wines found</p>
+                <p className="text-gray-500 text-sm">Try adjusting your filters</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </main>
+    </div>
+  )
+}
+
+export default WinesPage

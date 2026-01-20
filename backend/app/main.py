@@ -85,6 +85,12 @@ async def health_check():
 # app.include_router(wineries.router, prefix="/api/wineries", tags=["wineries"])
 # app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 
+#Import Routers
+from app.routers import wineries, wines
+#Include Routers
+app.include_router(wineries.router, prefix="/api/wineries", tags=["wineries"])
+app.include_router(wines.router, prefix="/api/wines", tags=["wines"])
+
 
 if __name__ == "__main__":
     import uvicorn

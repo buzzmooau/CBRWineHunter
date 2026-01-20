@@ -1,0 +1,150 @@
+"""
+Wines API endpoints
+"""
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
+from typing import Optional
+from app.database import get_db
+from app.models.wine import Wine
+from app.models.winery import Winery
+from pydantic import BaseModel
+from datetime import datetime
+
+
+class WinerySummary(BaseModel):
+    id: int
+    name: str
+    slug: str
+    
+    class Config:
+        from_attributes = True
+
+
+class WineResponse(BaseModel):
+    id: int
+    name: str
+    variety: Optional[str] = None
+    vintage: Optional[str] = None
+    price: Optional[float] = None
+    description: Optional[str] = None
+    product_url: Optional[str] = None
+    is_available: bool
+    winery: WinerySummary
+    
+    class Config:
+        from_attributes = True
+
+
+class WineListResponse(BaseModel):
+    total: int
+    wines: list[WineResponse]
+
+
+# Create router
+router = APIRouter()
+
+
+@router.get("/", response_model=WineListResponse)
+def get_wines(
+    skip: int = 0,
+    limit: int = 50,
+    variety: Optional[str] = None,
+    vintage: Optional[str] = None,
+    min_price: Optional[float] = None,
+    max_price: Optional[float] = None,
+    winery_id: Optional[int] = None,
+    search: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Get list of wines with filtering
+    
+    - **skip**: Number of wines to skip (pagination)
+    - **limit**: Maximum number of wines to return
+    - **variety**: Filter by variety (e.g., 'Shiraz', 'Riesling')
+    - **vintage**: Filter by vintage (e.g., '2024', 'NV')
+    - **min_price**: Minimum price
+    - **max_price**: Maximum price
+    - **winery_id**: Filter by winery ID
+    - **search**: Search in wine name
+    """
+    query = db.query(Wine).filter(Wine.is_available == True)
+    
+    if variety:
+        query = query.filter(Wine.variety.ilike(f"%{variety}%"))
+    
+    if vintage:
+        query = query.filter(Wine.vintage == vintage)
+    
+    if min_price is not None:
+        query = query.filter(Wine.price >= min_price)
+    
+    if max_price is not None:
+        query = query.filter(Wine.price <= max_price)
+    
+    if winery_id:
+        query = query.filter(Wine.winery_id == winery_id)
+    
+    if search:
+        query = query.filter(Wine.name.ilike(f"%{search}%"))
+    
+    total = query.count()
+    wines = query.order_by(Wine.name).offset(skip).limit(limit).all()
+    
+    return {
+        "total": total,
+        "wines": wines
+    }
+
+
+@router.get("/{wine_id}", response_model=WineResponse)
+def get_wine(wine_id: int, db: Session = Depends(get_db)):
+    """Get a specific wine by ID"""
+    wine = db.query(Wine).filter(Wine.id == wine_id).first()
+    
+    if not wine:
+        raise HTTPException(status_code=404, detail="Wine not found")
+    
+    return wine
+
+
+@router.get("/varieties/list")
+def get_varieties(db: Session = Depends(get_db)):
+    """Get list of all wine varieties with counts"""
+    from sqlalchemy import func
+    
+    varieties = db.query(
+        Wine.variety,
+        func.count(Wine.id).label('count')
+    ).filter(
+        Wine.is_available == True,
+        Wine.variety.isnot(None)
+    ).group_by(Wine.variety).order_by(Wine.variety).all()
+    
+    return {
+        "varieties": [
+            {"name": v.variety, "count": v.count}
+            for v in varieties
+        ]
+    }
+
+
+@router.get("/vintages/list")
+def get_vintages(db: Session = Depends(get_db)):
+    """Get list of all vintages with counts"""
+    from sqlalchemy import func
+    
+    vintages = db.query(
+        Wine.vintage,
+        func.count(Wine.id).label('count')
+    ).filter(
+        Wine.is_available == True,
+        Wine.vintage.isnot(None)
+    ).group_by(Wine.vintage).order_by(Wine.vintage.desc()).all()
+    
+    return {
+        "vintages": [
+            {"year": v.vintage, "count": v.count}
+            for v in vintages
+        ]
+    }
