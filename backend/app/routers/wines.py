@@ -148,3 +148,101 @@ def get_vintages(db: Session = Depends(get_db)):
             for v in vintages
         ]
     }
+# ADD THESE AT THE END OF wines.py
+
+class WineCreate(BaseModel):
+    winery_id: int
+    name: str
+    variety: Optional[str] = None
+    vintage: Optional[str] = None
+    price: Optional[float] = None
+    description: Optional[str] = None
+    product_url: Optional[str] = None
+    image_url: Optional[str] = None
+    alcohol_content: Optional[str] = None
+    bottle_size: Optional[str] = None
+    is_available: bool = True
+
+class WineUpdate(BaseModel):
+    winery_id: Optional[int] = None
+    name: Optional[str] = None
+    variety: Optional[str] = None
+    vintage: Optional[str] = None
+    price: Optional[float] = None
+    description: Optional[str] = None
+    product_url: Optional[str] = None
+    image_url: Optional[str] = None
+    alcohol_content: Optional[str] = None
+    bottle_size: Optional[str] = None
+    is_available: Optional[bool] = None
+
+@router.post("/", response_model=dict)
+def create_wine(wine_data: WineCreate, db: Session = Depends(get_db)):
+    """Create a new wine"""
+    
+    # Check if winery exists
+    winery = db.query(Winery).filter(Winery.id == wine_data.winery_id).first()
+    if not winery:
+        raise HTTPException(status_code=404, detail="Winery not found")
+    
+    # Create wine
+    wine = Wine(
+        winery_id=wine_data.winery_id,
+        name=wine_data.name,
+        variety=wine_data.variety,
+        vintage=wine_data.vintage,
+        price=wine_data.price,
+        description=wine_data.description,
+        product_url=wine_data.product_url,
+        image_url=wine_data.image_url,
+        alcohol_content=wine_data.alcohol_content,
+        bottle_size=wine_data.bottle_size,
+        is_available=wine_data.is_available
+    )
+    
+    db.add(wine)
+    db.commit()
+    db.refresh(wine)
+    
+    return {"id": wine.id, "message": "Wine created successfully"}
+
+@router.put("/{wine_id}", response_model=dict)
+def update_wine(wine_id: int, wine_data: WineUpdate, db: Session = Depends(get_db)):
+    """Update an existing wine"""
+    
+    # Get existing wine
+    wine = db.query(Wine).filter(Wine.id == wine_id).first()
+    if not wine:
+        raise HTTPException(status_code=404, detail="Wine not found")
+    
+    # Update fields that were provided
+    update_data = wine_data.dict(exclude_unset=True)
+    
+    # If winery_id is being changed, verify it exists
+    if 'winery_id' in update_data:
+        winery = db.query(Winery).filter(Winery.id == update_data['winery_id']).first()
+        if not winery:
+            raise HTTPException(status_code=404, detail="Winery not found")
+    
+    for field, value in update_data.items():
+        setattr(wine, field, value)
+    
+    wine.updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(wine)
+    
+    return {"message": "Wine updated successfully"}
+
+@router.delete("/{wine_id}", response_model=dict)
+def delete_wine(wine_id: int, db: Session = Depends(get_db)):
+    """Delete a wine"""
+    
+    wine = db.query(Wine).filter(Wine.id == wine_id).first()
+    if not wine:
+        raise HTTPException(status_code=404, detail="Wine not found")
+    
+    db.delete(wine)
+    db.commit()
+    
+    return {"message": "Wine deleted successfully"}
