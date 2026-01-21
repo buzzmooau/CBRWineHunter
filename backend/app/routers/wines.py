@@ -41,7 +41,7 @@ class WineListResponse(BaseModel):
 
 
 # Create router
-router = APIRouter()
+router = APIRouter(prefix="/api/wines", tags=["wines"])
 
 
 @router.get("/", response_model=WineListResponse)
