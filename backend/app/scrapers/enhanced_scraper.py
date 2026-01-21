@@ -120,6 +120,8 @@ class EnhancedScraper(BaseScraper):
             'a[href*="/wine/"]',  # Barton Estate pattern
             'a[href*="/product"]',
             'a[href*="/products"]',
+            'a[href*="index.php?id="]',  # Gallagher Wines pattern
+            'a[href*="/the-wine/"]',  # Sassafras Wines (Squarespace)
             '.product-card a',
             '.product-item a',
             'article a',
@@ -132,17 +134,27 @@ class EnhancedScraper(BaseScraper):
                 for link in links:
                     href = link.get('href')
                     if href:
+                        # Handle protocol-relative URLs (e.g., //domain.com/path)
+                        if href.startswith('//'):
+                            href = 'https:' + href
                         # Make absolute URL
-                        if href.startswith('/'):
+                        elif href.startswith('/'):
                             from urllib.parse import urljoin
                             href = urljoin(self.shop_url, href)
                         elif not href.startswith('http'):
                             continue
                         
                         # Remove query params and anchors for deduplication
-                        from urllib.parse import urlparse, urlunparse
+                        # EXCEPT for sites that use query params for product IDs (e.g., index.php?id=123)
+                        from urllib.parse import urlparse, urlunparse, parse_qs
                         parsed = urlparse(href)
-                        base_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, '', '', ''))
+                        
+                        # Keep query params if they contain product identifiers
+                        if 'id=' in parsed.query or 'product' in parsed.query.lower():
+                            base_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, '', parsed.query, ''))
+                        else:
+                            # Remove query params for normal product URLs
+                            base_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, '', '', ''))
                         
                         # Only add if we haven't seen this base URL
                         if base_url not in seen_base_urls:
@@ -194,6 +206,12 @@ class EnhancedScraper(BaseScraper):
                     else:
                         name = clean_text(product_h1.get_text(strip=True))
             
+            # Try h1 with product-title class (Squarespace/Sassafras pattern)
+            if not name or len(name) <= 2:
+                product_h1 = soup.select_one('h1.product-title')
+                if product_h1:
+                    name = clean_text(product_h1.get_text(strip=True))
+            
             # Try other h1 tags if product_title didn't work
             if not name or len(name) <= 2:
                 # First try h1 with class="name" (Shaw Wines pattern)
@@ -236,6 +254,20 @@ class EnhancedScraper(BaseScraper):
                         continue
                     name = clean_text(text)
                     if name and len(name) > 2:
+                        break
+            
+            # Try strong tags (Gallagher Wines pattern)
+            if not name or len(name) <= 2:
+                strong_tags = soup.find_all('strong')
+                for strong in strong_tags:
+                    text = strong.get_text(strip=True)
+                    # Must look like a wine name (has a variety or vintage)
+                    if not text or len(text) <= 5:
+                        continue
+                    # Quick check if it looks like a wine name
+                    if any(variety.lower() in text.lower() for variety in ['riesling', 'chardonnay', 'pinot', 'shiraz', 'cabernet', 'sauvignon', 'sparkling']) or \
+                       any(str(year) in text for year in range(2010, 2031)):
+                        name = clean_text(text)
                         break
             
             # Fallback to other selectors if h1 didn't work
@@ -411,7 +443,7 @@ class EnhancedScraper(BaseScraper):
                 '.price',
                 '[class*="price"]',
                 'span:contains("$")',
-                '.amount'
+                '.amount',
             ]
             for selector in price_selectors:
                 elem = soup.select_one(selector)
@@ -420,6 +452,21 @@ class EnhancedScraper(BaseScraper):
                     price = self.clean_price(price_text)
                     if price:
                         break
+            
+            # Fallback: search all p tags for price (Gallagher Wines pattern)
+            if not price:
+                p_tags = soup.find_all('p')
+                for p in p_tags:
+                    text = p.get_text(strip=True)
+                    if '$' in text and len(text) < 50:  # Short text with $
+                        # Handle formats like "Price:$35.00" or "Price: $35.00"
+                        import re
+                        match = re.search(r'\$[\d,]+\.?\d*', text)
+                        if match:
+                            price_text = match.group(0)
+                            price = self.clean_price(price_text)
+                            if price:
+                                break
             
             # Extract description
             description = None
