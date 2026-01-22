@@ -4,11 +4,11 @@
 
 /* Global Styles */
 body {
-  @apply font-body text-gray-900;
+  @apply font-sans text-gray-900;
 }
 
 h1, h2, h3, h4, h5, h6 {
-  @apply font-display;
+  @apply font-serif;
 }
 
 /* Leaflet Map Styles */

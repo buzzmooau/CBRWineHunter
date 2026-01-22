@@ -53,7 +53,7 @@ export default function WinesPage() {
     try {
       const params = {
         limit: showAll ? 1000 : limit,
-        offset: showAll ? 0 : offset,
+        skip: showAll ? 0 : offset,
       };
 
       if (searchTerm) params.search = searchTerm;
