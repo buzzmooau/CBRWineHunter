@@ -3,6 +3,7 @@ import { AuthProvider } from './contexts/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import AdminLogin from './pages/AdminLogin';
 import AdminWines from './pages/AdminWines';
+import AdminReview from './pages/AdminReview';
 import WineForm from './pages/WineForm';
 
 function App() {
@@ -25,6 +26,17 @@ function App() {
               </ProtectedRoute>
             } 
           />
+          
+          {/* NEW: Review Route */}
+          <Route 
+            path="/admin/review" 
+            element={
+              <ProtectedRoute>
+                <AdminReview />
+              </ProtectedRoute>
+            } 
+          />
+          
           <Route 
             path="/admin/wines/new" 
             element={

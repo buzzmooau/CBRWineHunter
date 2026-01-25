@@ -14,7 +14,7 @@ from app.database import engine, SessionLocal
 from app.models.winery import Winery
 from app.models.wine import Wine
 from app.scrapers.enhanced_scraper import EnhancedScraper
-from sqlalchemy import text
+from sqlalchemy import text, func
 from datetime import datetime
 
 
@@ -28,10 +28,14 @@ def normalize_for_comparison(text):
 def scrape_and_save(winery_id: int):
     """
     Scrape wines from a winery and intelligently save to database
-    - Matches existing wines by normalized name + winery_id
-    - Updates price/availability if wine exists
-    - Preserves existing capitalization and data
-    - Adds new wines that don't exist
+    
+    NEW BEHAVIOR (with review workflow):
+    - New wines: saved with status='pending' (awaiting admin review)
+    - Existing wines: keep current status (usually 'live')
+    - Price updates: update price, keep status unchanged
+    - Removed wines: mark is_available=False (don't change status)
+    
+    This allows admin to review new wines before they appear on public site.
     """
     db = SessionLocal()
     
@@ -77,6 +81,7 @@ def scrape_and_save(winery_id: int):
         saved_count = 0
         updated_count = 0
         skipped_count = 0
+        pending_count = 0
         
         # Process scraped wines
         for wine_data in scraped_wines:
@@ -92,10 +97,10 @@ def scrape_and_save(winery_id: int):
                 if wine_data.get('price') and existing_wine.price != wine_data['price']:
                     old_price = existing_wine.price
                     existing_wine.price = wine_data['price']
-                    print(f"  ↻ UPDATED: {existing_wine.name} (${old_price} → ${wine_data['price']})")
+                    print(f"  ↻ UPDATED: {existing_wine.name} (${old_price} → ${wine_data['price']}) [status: {existing_wine.status}]")
                     updated_count += 1
                 else:
-                    print(f"  = UNCHANGED: {existing_wine.name}")
+                    print(f"  = UNCHANGED: {existing_wine.name} [status: {existing_wine.status}]")
                     skipped_count += 1
                 
                 # Update availability and last_seen
@@ -107,7 +112,7 @@ def scrape_and_save(winery_id: int):
                     existing_wine.product_url = wine_data['product_url']
                 
             else:
-                # New wine - add it
+                # New wine - add it with 'pending' status for review
                 new_wine = Wine(
                     winery_id=winery_id,
                     name=wine_data['name'],
@@ -117,19 +122,21 @@ def scrape_and_save(winery_id: int):
                     description=wine_data.get('description'),
                     product_url=wine_data.get('product_url'),
                     is_available=True,
+                    status='pending',  # NEW: Requires admin review before going live
                     first_seen_at=datetime.utcnow(),
                     last_seen_at=datetime.utcnow()
                 )
                 db.add(new_wine)
-                print(f"  + NEW: {wine_data['name']} (${wine_data.get('price')})")
+                print(f"  ⏳ PENDING REVIEW: {wine_data['name']} (${wine_data.get('price')}) [new wine]")
                 saved_count += 1
+                pending_count += 1
         
         # Mark wines as unavailable if they weren't in this scrape
         scraped_keys = {normalize_for_comparison(w['name']) for w in scraped_wines}
         for key, existing_wine in existing_wines_map.items():
             if key not in scraped_keys and existing_wine.is_available:
                 existing_wine.is_available = False
-                print(f"  - REMOVED: {existing_wine.name} (no longer available)")
+                print(f"  - REMOVED: {existing_wine.name} (no longer available) [status: {existing_wine.status}]")
         
         # Commit all changes
         db.commit()
@@ -141,18 +148,25 @@ def scrape_and_save(winery_id: int):
         print()
         print("=" * 80)
         print("Save Summary:")
-        print(f"  New wines added:        {saved_count}")
-        print(f"  Wines updated:          {updated_count}")
-        print(f"  Wines unchanged:        {skipped_count}")
-        print(f"  Total wines processed:  {len(scraped_wines)}")
+        print(f"  New wines (pending review): {pending_count}")
+        print(f"  Wines updated:              {updated_count}")
+        print(f"  Wines unchanged:            {skipped_count}")
+        print(f"  Total wines processed:      {len(scraped_wines)}")
         print("=" * 80)
         
-        # Show total wines for this winery
-        total_wines = db.query(Wine).filter(
+        # Show status breakdown for this winery
+        status_counts = db.query(Wine.status, func.count(Wine.id)).filter(
             Wine.winery_id == winery_id,
             Wine.is_available == True
-        ).count()
-        print(f"\nTotal available wines for {winery.name}: {total_wines}")
+        ).group_by(Wine.status).all()
+        
+        print(f"\nWine status for {winery.name}:")
+        for status, count in status_counts:
+            print(f"  {status.upper()}: {count}")
+        
+        if pending_count > 0:
+            print(f"\n⚠️  {pending_count} wine(s) are pending review!")
+            print(f"   Visit admin dashboard to review and approve.")
         
     except Exception as e:
         db.rollback()
@@ -168,13 +182,12 @@ if __name__ == "__main__":
     if len(sys.argv) != 2:
         print("Usage: python scrape_and_save.py <winery_id>")
         print("\nExample: python scrape_and_save.py 4")
-        print("\nThis will:")
-        print("  - Scrape all wines from the winery (no 20-wine limit)")
-        print("  - Match existing wines by name (case-insensitive)")
-        print("  - Update prices if changed")
-        print("  - Add new wines")
-        print("  - Preserve existing capitalization")
-        print("  - Mark unavailable wines")
+        print("\nNEW BEHAVIOR (Review Workflow):")
+        print("  - Scrapes all wines from the winery")
+        print("  - NEW wines saved as 'pending' status (awaiting review)")
+        print("  - EXISTING wines keep their current status")
+        print("  - Price updates preserve status")
+        print("  - Review pending wines in admin dashboard before going live")
         sys.exit(1)
     
     winery_id = int(sys.argv[1])
