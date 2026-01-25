@@ -377,6 +377,22 @@ class EnhancedScraper(BaseScraper):
                 logger.debug(f"Skipping non-wine item: {name}")
                 return None
             
+            # Fix ALL CAPS names (convert to Title Case)
+            # Only if the name has 3+ consecutive uppercase words
+            words = name.split()
+            uppercase_words = sum(1 for word in words if word.isupper() and len(word) > 1)
+            
+            if uppercase_words >= 3:
+                # Convert to title case, but preserve special cases
+                title_words = []
+                for word in words:
+                    if word.upper() in ['NV', 'ML']:
+                        title_words.append(word.upper())
+                    else:
+                        title_words.append(word.title())
+                name = ' '.join(title_words)
+                logger.debug(f"Fixed ALL CAPS name to: {name}")
+            
             # ========================================================================
             # VINTAGE & VARIETY EXTRACTION - WINERY-SPECIFIC LOGIC
             # ========================================================================
