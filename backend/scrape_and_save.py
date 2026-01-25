@@ -1,110 +1,135 @@
 #!/usr/bin/env python3
 """
 Scrape wines from a winery and save to database
-Usage: python scrape_and_save.py <winery_id>
+Handles duplicates intelligently - updates existing wines, adds new ones
+Preserves existing capitalization and data
 """
 import sys
 import os
 from pathlib import Path
-from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app.database import SessionLocal
+from app.database import engine, SessionLocal
 from app.models.winery import Winery
 from app.models.wine import Wine
 from app.scrapers.enhanced_scraper import EnhancedScraper
 from sqlalchemy import text
+from datetime import datetime
+
+
+def normalize_for_comparison(text):
+    """Normalize text for duplicate detection (case-insensitive, whitespace-normalized)"""
+    if not text:
+        return ""
+    return " ".join(text.lower().split())
 
 
 def scrape_and_save(winery_id: int):
-    """Scrape wines from a winery and save to database"""
-    
+    """
+    Scrape wines from a winery and intelligently save to database
+    - Matches existing wines by normalized name + winery_id
+    - Updates price/availability if wine exists
+    - Preserves existing capitalization and data
+    - Adds new wines that don't exist
+    """
     db = SessionLocal()
     
     try:
-        # Get winery info
+        # Get winery
         winery = db.query(Winery).filter(Winery.id == winery_id).first()
-        
         if not winery:
             print(f"Winery with ID {winery_id} not found")
             return
         
-        print(f"=== Scraping {winery.name} ===")
-        print(f"Shop URL: {winery.shop_url}")
+        print(f"=" * 80)
+        print(f"Scraping: {winery.name}")
+        print(f"URL: {winery.shop_url}")
+        print(f"=" * 80)
         print()
         
-        # Create scraper
+        # Run scraper
         scraper = EnhancedScraper(
             winery_id=winery.id,
             winery_name=winery.name,
             shop_url=winery.shop_url
         )
         
-        # Scrape wines
-        wines_data = scraper.scrape()
+        scraped_wines = scraper.scrape()
         
-        if not wines_data:
-            print("No wines found to save.")
+        if not scraped_wines:
+            print("No wines found!")
             return
         
-        print(f"\n=== Saving {len(wines_data)} wines to database ===\n")
+        print()
+        print(f"Found {len(scraped_wines)} wines. Processing...")
+        print()
+        
+        # Get all existing wines for this winery
+        existing_wines = db.query(Wine).filter(Wine.winery_id == winery_id).all()
+        existing_wines_map = {}
+        
+        for wine in existing_wines:
+            # Create lookup key: normalized name
+            key = normalize_for_comparison(wine.name)
+            existing_wines_map[key] = wine
         
         saved_count = 0
         updated_count = 0
-        flagged_count = 0
+        skipped_count = 0
         
-        for wine_data in wines_data:
-            try:
-                # Check if wine already exists (by name and winery)
-                existing_wine = db.query(Wine).filter(
-                    Wine.winery_id == winery_id,
-                    Wine.name == wine_data['name']
-                ).first()
+        # Process scraped wines
+        for wine_data in scraped_wines:
+            # Create lookup key for this scraped wine
+            scraped_key = normalize_for_comparison(wine_data['name'])
+            
+            # Check if wine already exists
+            if scraped_key in existing_wines_map:
+                # Wine exists - update only price and availability
+                existing_wine = existing_wines_map[scraped_key]
                 
-                if existing_wine:
-                    # Update existing wine
-                    existing_wine.variety = wine_data.get('variety')
-                    existing_wine.vintage = wine_data.get('vintage')
-                    existing_wine.price = wine_data.get('price')
-                    existing_wine.description = wine_data.get('description')
-                    existing_wine.product_url = wine_data.get('product_url')
-                    existing_wine.is_available = True
-                    existing_wine.last_seen_at = datetime.utcnow()
-                    existing_wine.updated_at = datetime.utcnow()
-                    
-                    print(f"✓ Updated: {wine_data['name']}")
+                # Update price if changed
+                if wine_data.get('price') and existing_wine.price != wine_data['price']:
+                    old_price = existing_wine.price
+                    existing_wine.price = wine_data['price']
+                    print(f"  ↻ UPDATED: {existing_wine.name} (${old_price} → ${wine_data['price']})")
                     updated_count += 1
                 else:
-                    # Create new wine
-                    new_wine = Wine(
-                        winery_id=wine_data['winery_id'],
-                        name=wine_data['name'],
-                        variety=wine_data.get('variety'),
-                        vintage=wine_data.get('vintage'),
-                        price=wine_data.get('price'),
-                        description=wine_data.get('description'),
-                        product_url=wine_data.get('product_url'),
-                        is_available=True,
-                        last_seen_at=datetime.utcnow(),
-                        first_seen_at=datetime.utcnow()
-                    )
-                    db.add(new_wine)
-                    
-                    # Check if should be flagged
-                    should_flag, reasons = scraper.should_flag_for_review(wine_data)
-                    if should_flag:
-                        flagged_count += 1
-                        print(f"⚠ Added (flagged): {wine_data['name']}")
-                        print(f"   Reasons: {', '.join(reasons)}")
-                    else:
-                        print(f"✓ Added: {wine_data['name']}")
-                    
-                    saved_count += 1
+                    print(f"  = UNCHANGED: {existing_wine.name}")
+                    skipped_count += 1
                 
-            except Exception as e:
-                print(f"✗ Error saving {wine_data.get('name', 'Unknown')}: {str(e)}")
-                continue
+                # Update availability and last_seen
+                existing_wine.is_available = True
+                existing_wine.last_seen_at = datetime.utcnow()
+                
+                # Update product URL if it changed
+                if wine_data.get('product_url'):
+                    existing_wine.product_url = wine_data['product_url']
+                
+            else:
+                # New wine - add it
+                new_wine = Wine(
+                    winery_id=winery_id,
+                    name=wine_data['name'],
+                    variety=wine_data.get('variety'),
+                    vintage=wine_data.get('vintage'),
+                    price=wine_data.get('price'),
+                    description=wine_data.get('description'),
+                    product_url=wine_data.get('product_url'),
+                    is_available=True,
+                    first_seen_at=datetime.utcnow(),
+                    last_seen_at=datetime.utcnow()
+                )
+                db.add(new_wine)
+                print(f"  + NEW: {wine_data['name']} (${wine_data.get('price')})")
+                saved_count += 1
+        
+        # Mark wines as unavailable if they weren't in this scrape
+        scraped_keys = {normalize_for_comparison(w['name']) for w in scraped_wines}
+        for key, existing_wine in existing_wines_map.items():
+            if key not in scraped_keys and existing_wine.is_available:
+                existing_wine.is_available = False
+                print(f"  - REMOVED: {existing_wine.name} (no longer available)")
         
         # Commit all changes
         db.commit()
@@ -114,21 +139,26 @@ def scrape_and_save(winery_id: int):
         db.commit()
         
         print()
-        print("="*60)
+        print("=" * 80)
         print("Save Summary:")
-        print(f"  New wines added: {saved_count}")
-        print(f"  Wines updated: {updated_count}")
-        print(f"  Wines flagged for review: {flagged_count}")
-        print(f"  Total in database: {saved_count + updated_count}")
-        print("="*60)
+        print(f"  New wines added:        {saved_count}")
+        print(f"  Wines updated:          {updated_count}")
+        print(f"  Wines unchanged:        {skipped_count}")
+        print(f"  Total wines processed:  {len(scraped_wines)}")
+        print("=" * 80)
         
         # Show total wines for this winery
-        total_wines = db.query(Wine).filter(Wine.winery_id == winery_id).count()
-        print(f"\nTotal wines for {winery.name}: {total_wines}")
+        total_wines = db.query(Wine).filter(
+            Wine.winery_id == winery_id,
+            Wine.is_available == True
+        ).count()
+        print(f"\nTotal available wines for {winery.name}: {total_wines}")
         
     except Exception as e:
         db.rollback()
         print(f"Error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise
     finally:
         db.close()
@@ -138,6 +168,13 @@ if __name__ == "__main__":
     if len(sys.argv) != 2:
         print("Usage: python scrape_and_save.py <winery_id>")
         print("\nExample: python scrape_and_save.py 4")
+        print("\nThis will:")
+        print("  - Scrape all wines from the winery (no 20-wine limit)")
+        print("  - Match existing wines by name (case-insensitive)")
+        print("  - Update prices if changed")
+        print("  - Add new wines")
+        print("  - Preserve existing capitalization")
+        print("  - Mark unavailable wines")
         sys.exit(1)
     
     winery_id = int(sys.argv[1])
